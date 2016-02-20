@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ type LinesStat struct {
 }
 
 func (l *LinesStat) Append(lines LinesStat) {
+	l.LastMonth += lines.LastMonth
 	l.Last3Month += lines.Last3Month
 	l.Last6Month += lines.Last6Month
 	l.LastYear += lines.LastYear
@@ -243,8 +245,10 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 	var mu sync.Mutex
 
 	wg := sync.WaitGroup{}
-	wgC := 0
 
+	wgC := 0
+	fmt.Printf("CPUs: %d\n", runtime.NumCPU())
+	pool := make(chan bool, runtime.NumCPU())
 	for _, file := range files {
 
 		file := string(file)
@@ -262,12 +266,17 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 		if strings.HasPrefix(file, "bin") {
 			continue
 		}
-		fmt.Printf("File: %v\n", file)
+
 		wg.Add(1)
 		wgC++
 
+		pool <- true
 		go func(mu *sync.Mutex, repoPath string, file string, rs *RepoStat) {
-			defer wg.Done()
+			fmt.Printf("File: %v\n", file)
+			defer func() {
+				<-pool
+				wg.Done()
+			}()
 			fs, err := BlameFile(repoPath, file)
 
 			if err != nil {
@@ -285,10 +294,6 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 
 			}
 		}(&mu, repoPath, file, &rs)
-		if wgC > 32 {
-			wgC = 0
-			wg.Wait()
-		}
 
 	}
 	wg.Wait()
