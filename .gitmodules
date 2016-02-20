@@ -1,0 +1,16 @@
+[submodule "src/github.com/davecgh/go-spew"]
+	path = src/github.com/davecgh/go-spew
+[submodule "src/github.com/gin-gonic/gin"]
+	path = src/github.com/gin-gonic/gin
+[submodule "src/github.com/golang/protobuf"]
+	path = src/github.com/golang/protobuf
+[submodule "src/github.com/manucorporat/sse"]
+	path = src/github.com/manucorporat/sse
+[submodule "src/github.com/Sirupsen/logrus"]
+	path = src/github.com/Sirupsen/logrus
+[submodule "src/golang.org/x/net"]
+	path = src/golang.org/x/net
+[submodule "src/gopkg.in/go-playground/validator.v8"]
+	path = src/gopkg.in/go-playground/validator.v8
+[submodule "src/gopkg.in/mgo.v2"]
+	path = src/gopkg.in/mgo.v2
