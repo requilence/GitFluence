@@ -29,6 +29,13 @@ type LinesStat struct {
 	Total      int
 }
 
+func (l *LinesStat) Append(lines LinesStat) {
+	l.Last3Month += lines.Last3Month
+	l.Last6Month += lines.Last6Month
+	l.LastYear += lines.LastYear
+	l.Total += lines.Total
+}
+
 type FileStat struct {
 	TotalLines int
 	Users      map[string]*UserStat
@@ -265,7 +272,6 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 				fmt.Printf("error: %v", err.Error())
 			} else {
 				if fs != nil && fs.TotalLines > 0 {
-					rs.Lines.Total += fs.TotalLines
 					func() {
 						mu.Lock()
 						defer mu.Unlock()
@@ -284,7 +290,16 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 
 	}
 	wg.Wait()
-
+	rs.Users = make(map[string]*UserStat)
+	for _, fs := range rs.Files {
+		for email, us := range fs.Users {
+			if _, exists := rs.Users[email]; !exists {
+				rs.Users[email] = &UserStat{}
+			}
+			rs.Lines.Append(us.Lines)
+			rs.Users[email].Lines.Append(us.Lines)
+		}
+	}
 	return &rs, nil
 
 }
