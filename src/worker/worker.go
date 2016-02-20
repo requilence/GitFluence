@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -16,9 +17,10 @@ import (
 const REPOS_DIR = "/tmp/repos"
 
 type UserStat struct {
-	Lines    LinesStat
-	Email    string
-	Username string
+	Lines       LinesStat
+	LinesPerExt map[string]*LinesStat
+	Email       string
+	Username    string
 }
 
 type LinesStat struct {
@@ -291,13 +293,22 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 	}
 	wg.Wait()
 	rs.Users = make(map[string]*UserStat)
-	for _, fs := range rs.Files {
+	for file, fs := range rs.Files {
+		ext := path.Ext(file)
+
 		for email, us := range fs.Users {
 			if _, exists := rs.Users[email]; !exists {
 				rs.Users[email] = &UserStat{}
+				rs.Users[email].LinesPerExt = make(map[string]*LinesStat)
 			}
 			rs.Lines.Append(us.Lines)
 			rs.Users[email].Lines.Append(us.Lines)
+
+			if _, exists := rs.Users[email].LinesPerExt[ext]; !exists {
+				rs.Users[email].LinesPerExt[ext] = &LinesStat{}
+			}
+
+			rs.Users[email].LinesPerExt[ext].Append(us.Lines)
 		}
 	}
 	return &rs, nil
