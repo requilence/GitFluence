@@ -19,16 +19,26 @@ import (
 
 	"net/http"
 
+	"io/ioutil"
+
 	log "github.com/Sirupsen/logrus"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/github"
 	"golang.org/x/oauth2"
 )
 
+var DOC_EXTS = []string{"md", "markdown", "mdown", "mkdn", "mdwn", "mdtxt", "txt", "text", "doc", "htm", "html"}
+
+var DEPS_REGEXPS = []string{`(^|/)cache/`, `^[Dd]ependencies/`, `^deps/`, `^tools/`, `(^|/)configure$`, `(^|/)configure.ac$`, `(^|/)config.guess$`, `(^|/)config.sub$`, `cpplint.py`, `node_modules/`, `bower_components/`, `^rebar$`, `erlang.mk`, `Godeps/_workspace/`, `(\.|-)min\.(js|css)$`, `([^\s]*)import\.(css|less|scss|styl)$`, `(^|/)bootstrap([^.]*)\.(js|css|less|scss|styl)$`, `(^|/)custom\.bootstrap([^\s]*)(js|css|less|scss|styl)$`, `(^|/)font-awesome\.(css|less|scss|styl)$`, `(^|/)foundation\.(css|less|scss|styl)$`, `(^|/)normalize\.(css|less|scss|styl)$`, `(^|/)[Bb]ourbon/.*\.(css|less|scss|styl)$`, `(^|/)animate\.(css|less|scss|styl)$`, `third[-_]?party/`, `3rd[-_]?party/`, `vendors?/`, `extern(al)?/`, `(^|/)[Vv]+endor/`, `^debian/`, `run.n$`, `bootstrap-datepicker/`, `(^|/)jquery([^.]*)\.js$`, `(^|/)jquery\-\d\.\d+(\.\d+)?\.js$`, `(^|/)jquery\-ui(\-\d\.\d+(\.\d+)?)?(\.\w+)?\.(js|css)$`, `(^|/)jquery\.(ui|effects)\.([^.]*)\.(js|css)$`, `jquery.fn.gantt.js`, `jquery.fancybox.(js|css)`, `fuelux.js`, `(^|/)jquery\.fileupload(-\w+)?\.js$`, `(^|/)slick\.\w+.js$`, `(^|/)Leaflet\.Coordinates-\d+\.\d+\.\d+\.src\.js$`, `leaflet.draw-src.js`, `leaflet.draw.css`, `Control.FullScreen.css`, `Control.FullScreen.js`, `leaflet.spin.js`, `wicket-leaflet.js`, `.sublime-project`, `.sublime-workspace`, `(^|/)prototype(.*)\.js$`, `(^|/)effects\.js$`, `(^|/)controls\.js$`, `(^|/)dragdrop\.js$`, `(.*?)\.d\.ts$`, `(^|/)mootools([^.]*)\d+\.\d+.\d+([^.]*)\.js$`, `(^|/)dojo\.js$`, `(^|/)MochiKit\.js$`, `(^|/)yahoo-([^.]*)\.js$`, `(^|/)yui([^.]*)\.js$`, `(^|/)ckeditor\.js$`, `(^|/)tiny_mce([^.]*)\.js$`, `(^|/)tiny_mce/(langs|plugins|themes|utils)`, `(^|/)MathJax/`, `(^|/)Chart\.js$`, `(^|/)[Cc]ode[Mm]irror/(\d+\.\d+/)?(lib|mode|theme|addon|keymap|demo)`, `(^|/)shBrush([^.]*)\.js$`, `(^|/)shCore\.js$`, `(^|/)shLegacy\.js$`, `(^|/)angular([^.]*)\.js$`, `(^|\/)d3(\.v\d+)?([^.]*)\.js$`, `(^|/)react(-[^.]*)?\.js$`, `(^|/)modernizr\-\d\.\d+(\.\d+)?\.js$`, `(^|/)modernizr\.custom\.\d+\.js$`, `(^|/)knockout-(\d+\.){3}(debug\.)?js$`, `(^|/)docs?/_?(build|themes?|templates?|static)/`, `(^|/)admin_media/`, `^fabfile\.py$`, `^waf$`, `^.osx$`, `\.xctemplate/`, `\.imageset/`, `^Carthage/`, `^Pods/`, `(^|/)Sparkle/`, `Crashlytics.framework/`, `Fabric.framework/`, `gitattributes$`, `gitignore$`, `gitmodules$`, `(^|/)gradlew$`, `(^|/)gradlew\.bat$`, `(^|/)gradle/wrapper/`, `-vsdoc\.js$`, `\.intellisense\.js$`, `(^|/)jquery([^.]*)\.validate(\.unobtrusive)?\.js$`, `(^|/)jquery([^.]*)\.unobtrusive\-ajax\.js$`, `(^|/)[Mm]icrosoft([Mm]vc)?([Aa]jax|[Vv]alidation)(\.debug)?\.js$`, `^[Pp]ackages\/.+\.\d+\/`, `(^|/)extjs/.*?\.js$`, `(^|/)extjs/.*?\.xml$`, `(^|/)extjs/.*?\.txt$`, `(^|/)extjs/.*?\.html$`, `(^|/)extjs/.*?\.properties$`, `(^|/)extjs/.sencha/`, `(^|/)extjs/docs/`, `(^|/)extjs/builds/`, `(^|/)extjs/cmd/`, `(^|/)extjs/examples/`, `(^|/)extjs/locale/`, `(^|/)extjs/packages/`, `(^|/)extjs/plugins/`, `(^|/)extjs/resources/`, `(^|/)extjs/src/`, `(^|/)extjs/welcome/`, `(^|/)html5shiv\.js$`, `^[Tt]ests?/fixtures/`, `^[Ss]pecs?/fixtures/`, `(^|/)cordova([^.]*)\.js$`, `(^|/)cordova\-\d\.\d(\.\d)?\.js$`, `foundation(\..*)?\.js$`, `^Vagrantfile$`, `.[Dd][Ss]_[Ss]tore$`, `^vignettes/`, `^inst/extdata/`, `octicons.css`, `sprockets-octicons.scss`, `(^|/)activator$`, `(^|/)activator\.bat$`, `proguard.pro`, `proguard-rules.pro`, `^puphpet/`, `(^|/)\.google_apis/`}
+
+var depRegexp *regexp.Regexp
+
 const REPOS_DIR = "/tmp/repos"
 const TOP_REPO_USERS = 15
 
 func MD5(text string) string {
+
 	hasher := md5.New()
 	hasher.Write([]byte(text))
 	return hex.EncodeToString(hasher.Sum(nil))
@@ -47,15 +57,21 @@ func exists(path string) bool {
 
 type ByLines []*UserStat
 
-func (a ByLines) Len() int           { return len(a) }
-func (a ByLines) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByLines) Less(i, j int) bool { return a[i].Lines.Total > a[j].Lines.Total }
+func (a ByLines) Len() int      { return len(a) }
+func (a ByLines) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByLines) Less(i, j int) bool {
+	return a[i].CodeLines.Total+a[i].DocLines.Total+a[i].TestLines.Total+a[i].Resources.Total > a[j].CodeLines.Total+a[j].DocLines.Total+a[j].TestLines.Total+a[j].Resources.Total
+}
 
 func init() {
 	if !exists(REPOS_DIR) {
 		os.MkdirAll(REPOS_DIR, 0777)
 	}
 
+	depRegexp = regexp.MustCompile(strings.Join(DEPS_REGEXPS, "|"))
+	/*for _,re:=range DEPS_REGEXPS{
+		depRegexpStr+="("
+	}*/
 }
 
 func (repo RepoConfig) GitClone() (string, error) {
@@ -106,7 +122,7 @@ func RepoListFiles(repoPath string) ([]string, error) {
 	return files, nil
 }
 
-var blameHeaderRE = regexp.MustCompile("([0-9a-f]{40})\\s([^\\(]*)?\\(<([^>]*[^0-9]*)([^\\s]*\\s[^\\s]*\\s[^\\s]*)\\s*([0-9]*)\\)\\s([^\n]*)")
+var blameHeaderRE = regexp.MustCompile("([0-9a-f]{40})\\s([^(]*)?\\(<([^>]*[^0-9]*)([^\\s]*\\s[^\\s]*\\s[^\\s]*)(\\s*[0-9]*\\))\\s[^\\n]*")
 
 func GithubUsernameFromAPI(owner, repo, commitID string) (string, error) {
 	ts := oauth2.StaticTokenSource(
@@ -135,6 +151,11 @@ func GithubUsername(owner, repo, commitID string) string {
 
 }
 func BlameFile(repoPath string, filePath string) (*FileStat, error) {
+
+	if depRegexp.MatchString(filePath) {
+		return nil, errors.New("File is dependence")
+	}
+
 	cmd := exec.Command("git", "blame", "-w", "-M", "-l", "-C", "-e", "--", filePath)
 	fs := FileStat{Users: make(map[string]*UserStat)}
 	cmd.Dir = repoPath
@@ -154,19 +175,49 @@ func BlameFile(repoPath string, filePath string) (*FileStat, error) {
 		if fileInfo.Size() == 0 {
 			return nil, nil
 		}
+		//TODO: binary file?
 
 		return nil, errors.New("Bad git-blame output")
+	}
+	ext := path.Ext(filePath)
+
+	if len(ext) < 2 {
+		fs.IsDoc = true
+		// may be a binary file. will check later
+	} else {
+		ext = strings.ToLower(ext[1:])
+		for _, docExt := range DOC_EXTS {
+			if ext == docExt {
+				fs.IsDoc = true
+				break
+			}
+		}
+	}
+
+	if !fs.IsDoc {
+		//TODO: handle specific test file cases
+		if strings.Contains(filePath, "test") {
+			fs.IsTest = true
+		}
 	}
 
 	blameHeader := blameHeaderRE.FindStringSubmatch(string(out[0:200]))
 
+	if len(blameHeader) < 6 {
+		return nil, errors.New("bad row: " + string(out[0:200]))
+	}
 	l1 := len(blameHeader[1])
 	l2 := len(blameHeader[2])
 	l3 := len(blameHeader[3])
+	l4 := len(blameHeader[4])
+	l5 := len(blameHeader[5])
+
+	spew.Dump(blameHeader)
 
 	pos := 0
 	now := time.Now().Unix()
 	c := 0
+	commentStarted := false
 
 	for c < len(out) {
 
@@ -194,22 +245,59 @@ func BlameFile(repoPath string, filePath string) (*FileStat, error) {
 			fs.Users[email].CommitDays = daysAfterCommit
 		}
 
-		fs.Users[email].Lines.Total++
+		c = c + l1 + l2 + l3 + l4 + l5
+
+		lineStart := c
+		for out[c] != '\n' {
+			c++
+		}
+		lineIsComment := false
+		if !fs.IsDoc {
+			line := string(out[lineStart:c])
+
+			//TODO: other language comments handling
+			if !commentStarted {
+				first2Symbol := strings.TrimSpace(line)[0:1]
+
+				if first2Symbol == "//" {
+					lineIsComment = true
+				} else if first2Symbol == "/*" {
+					commentStarted = true
+					lineIsComment = true
+				} else if first2Symbol[0:0] == "#" {
+					lineIsComment = true
+				}
+			} else {
+				lineIsComment = true
+				if strings.Contains(line, "*/") {
+					commentStarted = false
+				}
+			}
+
+		}
+		var linesStat *LinesStat
+		if lineIsComment || fs.IsDoc {
+			linesStat = &fs.Users[email].DocLines
+		} else if fs.IsTest {
+			linesStat = &fs.Users[email].TestLines
+		} else {
+			linesStat = &fs.Users[email].CodeLines
+		}
+
+		linesStat.Total++
 		if daysAfterCommit < 366 {
-			fs.Users[email].Lines.LastYear++
+			linesStat.LastYear++
 			if daysAfterCommit < 184 {
-				fs.Users[email].Lines.Last6Month++
+				linesStat.Last6Month++
 				if daysAfterCommit < 93 {
-					fs.Users[email].Lines.Last3Month++
+					linesStat.Last3Month++
 					if daysAfterCommit < 32 {
-						fs.Users[email].Lines.LastMonth++
+						linesStat.LastMonth++
 					}
 				}
 			}
 		}
-		for out[c] != '\n' {
-			c++
-		}
+
 		c++
 
 	}
@@ -276,7 +364,7 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 			fs, err := BlameFile(repoPath, file)
 
 			if err != nil {
-				fmt.Printf("error: %v", err.Error())
+				log.WithError(err).WithField("file", file).Error("BlameFile returned error")
 			} else {
 				if fs != nil && fs.TotalLines > 0 {
 					func() {
@@ -310,14 +398,25 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 				rs.Users[email].CommitID = us.CommitID
 				rs.Users[email].CommitDays = us.CommitDays
 			}
-			rs.Lines.Append(us.Lines)
-			rs.Users[email].Lines.Append(us.Lines)
+			rs.CodeLines.Append(us.CodeLines)
+			rs.TestLines.Append(us.TestLines)
+			rs.DocLines.Append(us.DocLines)
+			rs.Resources.Append(us.Resources)
+
+			rs.Users[email].CodeLines.Append(us.CodeLines)
+			rs.Users[email].TestLines.Append(us.TestLines)
+			rs.Users[email].DocLines.Append(us.DocLines)
+			rs.Users[email].Resources.Append(us.Resources)
 
 			if _, exists := rs.Users[email].LinesPerExt[ext]; !exists {
 				rs.Users[email].LinesPerExt[ext] = &LinesStat{}
 			}
 
-			rs.Users[email].LinesPerExt[ext].Append(us.Lines)
+			rs.Users[email].LinesPerExt[ext].Append(us.CodeLines)
+			rs.Users[email].LinesPerExt[ext].Append(us.TestLines)
+			rs.Users[email].LinesPerExt[ext].Append(us.DocLines)
+			rs.Users[email].LinesPerExt[ext].Append(us.Resources)
+
 		}
 	}
 
@@ -333,7 +432,8 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 	}
 	for i, user := range usersSlice[0:maxUsers] {
 		user.Username = GithubUsername(owner, repo, user.CommitID)
-		fmt.Printf("%d, %v: %d\n", i, user.Username, user.Lines.Total)
+		fmt.Printf("%d, %v: \n", i, user.Username)
+		spew.Dump(user)
 	}
 	return &rs, nil
 
@@ -377,8 +477,9 @@ func workerHandler() {
 	})
 
 	r.POST("/check", func(c *gin.Context) {
-		r, _ := c.GetPostForm("tokens")
-		tokens := strings.Split(r, ",")
+		body, _ := ioutil.ReadAll(c.Request.Body)
+
+		tokens := strings.Split(string(body), ",")
 		if len(tokens) > 0 {
 			res := gin.H{}
 
@@ -399,7 +500,9 @@ func workerHandler() {
 	})
 
 	r.POST("/query", func(c *gin.Context) {
-		repoURL := c.PostForm("repo")
+		body, _ := ioutil.ReadAll(c.Request.Body)
+
+		repoURL := string(body)
 		fmt.Println("repo: " + repoURL)
 		r := RepoConfig{URL: repoURL}
 

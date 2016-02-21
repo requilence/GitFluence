@@ -116,9 +116,8 @@ var mu sync.Mutex
 
 func repoQuery(repoURL string) {
 	c := http.DefaultClient
-	form := url.Values{"repo": {strings.Join(tokensToFetch, ",")}}
-	req, _ := http.NewRequest("POST", workerBaseURL+"query", strings.NewReader(form.Encode()))
-	resp, _ := c.Do(req)
+	req, _ := http.NewRequest("POST", workerBaseURL+"query", strings.NewReader(repoURL))
+	resp, err := c.Do(req)
 	if resp.StatusCode == 200 {
 		defer resp.Body.Close()
 		contents, _ := ioutil.ReadAll(resp.Body)
@@ -128,6 +127,8 @@ func repoQuery(repoURL string) {
 			tokensToFetch = append(tokensToFetch, string(contents))
 			mu.Unlock()
 		}
+	} else {
+		log.WithError(err).Error("Can't request worker")
 	}
 }
 
@@ -139,8 +140,7 @@ func tokensFetchLoop() {
 
 	for {
 		if len(tokensToFetch) > 0 {
-			form := url.Values{"tokens": {strings.Join(tokensToFetch, ",")}}
-			req, _ := http.NewRequest("POST", workerBaseURL+"check", strings.NewReader(form.Encode()))
+			req, _ := http.NewRequest("POST", workerBaseURL+"check", strings.NewReader(strings.Join(tokensToFetch, ",")))
 			resp, err := c.Do(req)
 			if resp.StatusCode == 200 {
 
@@ -155,8 +155,17 @@ func tokensFetchLoop() {
 					log.WithError(err).Error("can't decode repostat")
 					continue
 				}
-				for token, rs := range data {
-					db.C("repostats").Insert(bson.M{"token": token, "stat": rs})
+				if len(data) > 0 {
+					for token, rs := range data {
+						db.C("repostats").Insert(bson.M{"token": token, "stat": rs})
+					}
+					b := tokensToFetch[:0]
+					for _, x := range tokensToFetch {
+						if _, exists := data[x]; !exists {
+							b = append(b, x)
+						}
+					}
+					tokensToFetch = b
 				}
 			}
 		}
@@ -174,7 +183,7 @@ func main() {
 		workerHandler()
 		return
 	}
-
+	go tokensFetchLoop()
 	r := gin.Default()
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{
@@ -189,6 +198,7 @@ func main() {
 		rs := rc.getCachedStat()
 
 		if rs == nil {
+			repoQuery(url)
 			c.JSON(200, gin.H{"status": "processing"})
 			return
 		}

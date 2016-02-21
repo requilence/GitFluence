@@ -1,20 +1,23 @@
 package main
 
 type UserStat struct {
-	Lines       LinesStat
-	LinesPerExt map[string]*LinesStat
+	CodeLines   LinesStat             `bson:",omitempty"`
+	DocLines    LinesStat             `bson:",omitempty"`
+	TestLines   LinesStat             `bson:",omitempty"`
+	Resources   LinesStat             `bson:",omitempty"`
+	LinesPerExt map[string]*LinesStat `bson:",omitempty"`
 	Email       string
-	CommitID    string
-	CommitDays  int
-	Username    string
+	CommitID    string `bson:",omitempty"`
+	CommitDays  int    `bson:",omitempty"`
+	Username    string `bson:",omitempty"`
 }
 
 type LinesStat struct {
-	LastMonth  int
-	Last3Month int
-	Last6Month int
-	LastYear   int
-	Total      int
+	LastMonth  int `bson:",omitempty"`
+	Last3Month int `bson:",omitempty"`
+	Last6Month int `bson:",omitempty"`
+	LastYear   int `bson:",omitempty"`
+	Total      int `bson:",omitempty"`
 }
 
 func (l *LinesStat) Append(lines LinesStat) {
@@ -26,12 +29,19 @@ func (l *LinesStat) Append(lines LinesStat) {
 }
 
 type FileStat struct {
+	IsDoc      bool
+	IsTest     bool
+	IsBinary   bool
 	TotalLines int
 	Users      map[string]*UserStat
 }
 
 type RepoStat struct {
-	Lines LinesStat
+	CodeLines LinesStat
+	TestLines LinesStat
+	DocLines  LinesStat
+	Resources LinesStat
+
 	Users map[string]*UserStat
 	Files map[string]*FileStat
 }
