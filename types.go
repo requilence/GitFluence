@@ -42,17 +42,18 @@ type RepoStat struct {
 	DocLines  LinesStat
 	Resources LinesStat
 
-	Users map[string]*UserStat
-	Files map[string]*FileStat
+	usersMap map[string]*UserStat
+	Users []*UserStat
+	//Files map[string]*FileStat
 }
 
 type RepoConfig struct {
 	URL string
 }
 type Repo struct {
-	Token string
+	Hash  string
 	Host  string
 	Owner string
 	Name  string
-	Stat  RepoStat
+	Stat  *RepoStat
 }

@@ -59,6 +59,11 @@ func (r *RepoConfig) Hash() string {
 	h, o, n, _ := r.ParseURL()
 	return MD5(h + "/" + o + "/" + n)
 }
+func (r *RepoConfig) Repo() *Repo {
+	host, owner, name, _ := r.ParseURL()
+	return &Repo{Hash: r.Hash(), Host: host, Owner: owner, Name: name}
+}
+
 func (r *RepoConfig) ParseURL() (host, owner, name string, err error) {
 
 	x := strings.Index(r.URL, ":")
@@ -105,8 +110,8 @@ func (r *RepoConfig) getCachedStat() *RepoStat {
 	cachedRepo := Repo{}
 	db.C("repostats").Find(bson.M{"token": r.Hash()}).One(&cachedRepo)
 
-	if cachedRepo.Token != "" {
-		return &cachedRepo.Stat
+	if cachedRepo.Hash != "" {
+		return cachedRepo.Stat
 	}
 	return nil
 }
@@ -142,12 +147,12 @@ func tokensFetchLoop() {
 		if len(tokensToFetch) > 0 {
 			req, _ := http.NewRequest("POST", workerBaseURL+"check", strings.NewReader(strings.Join(tokensToFetch, ",")))
 			resp, err := c.Do(req)
-			if resp.StatusCode == 200 {
+			if resp != nil && resp.StatusCode == 200 {
 
 				defer resp.Body.Close()
 
 				decoder := json.NewDecoder(resp.Body)
-				var data map[string]RepoStat
+				var data map[string]Repo
 
 				err = decoder.Decode(&data)
 
@@ -156,8 +161,8 @@ func tokensFetchLoop() {
 					continue
 				}
 				if len(data) > 0 {
-					for token, rs := range data {
-						db.C("repostats").Insert(bson.M{"token": token, "stat": rs})
+					for _, repo := range data {
+						db.C("repostats").Insert(repo)
 					}
 					b := tokensToFetch[:0]
 					for _, x := range tokensToFetch {

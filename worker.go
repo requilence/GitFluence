@@ -56,6 +56,27 @@ func exists(path string) bool {
 }
 
 type ByLines []*UserStat
+type ByCodeLines []*UserStat
+type ByDocLines []*UserStat
+type ByTestLines []*UserStat
+
+func (a ByDocLines) Len() int      { return len(a) }
+func (a ByDocLines) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByDocLines) Less(i, j int) bool {
+	return a[i].DocLines.Total > a[j].DocLines.Total
+}
+
+func (a ByTestLines) Len() int      { return len(a) }
+func (a ByTestLines) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByTestLines) Less(i, j int) bool {
+	return a[i].TestLines.Total > a[j].TestLines.Total
+}
+
+func (a ByCodeLines) Len() int      { return len(a) }
+func (a ByCodeLines) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByCodeLines) Less(i, j int) bool {
+	return a[i].CodeLines.Total > a[j].CodeLines.Total
+}
 
 func (a ByLines) Len() int      { return len(a) }
 func (a ByLines) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
@@ -112,6 +133,7 @@ func RepoListFiles(repoPath string) ([]string, error) {
 	}
 	paths := strings.Split(string(lines), "\x00")
 
+	fmt.Printf("FFiles: \n%v", strings.Join(paths, "\n"))
 	var files []string
 	for _, f := range paths {
 		if !isDir(filepath.Join(repoPath, f)) {
@@ -122,7 +144,75 @@ func RepoListFiles(repoPath string) ([]string, error) {
 	return files, nil
 }
 
-var blameHeaderRE = regexp.MustCompile("([0-9a-f]{40})\\s([^(]*)?\\(<([^>]*[^0-9]*)([^\\s]*\\s[^\\s]*\\s[^\\s]*)(\\s*[0-9]*\\))\\s[^\\n]*")
+func RepoListNonBinaryFiles(repoPath string) ([]string, error) {
+	cmd := exec.Command("git", "grep", "--cached", "-I", "-l", "''", "")
+	cmd.Dir = repoPath
+	cmd.Stderr = os.Stderr
+	lines, err := cmd.Output()
+
+	if err != nil {
+		return nil, err
+	}
+	paths := strings.Split(string(lines), "\n")
+
+	fmt.Printf("FFiles: \n%v", strings.Join(paths, "\n"))
+	var files []string
+	for _, f := range paths {
+		if !isDir(filepath.Join(repoPath, f)) {
+			files = append(files, f)
+		}
+	}
+
+	return files, nil
+}
+
+/*
+func RepoListBinaryFiles(repoPath string) ([]string, error) {
+
+	cmd := exec.Command("diff")
+	cmd.Dir = repoPath
+	cmd.Stderr = os.Stderr
+	lines, err := cmd.Output()
+
+	if err != nil {
+		return nil, err
+	}
+	paths := strings.Split(string(lines), "\n")
+
+	fmt.Printf("FFiles: \n%v", strings.Join(paths, "\n"))
+	var files []string
+	for _, f := range paths {
+		if !isDir(filepath.Join(repoPath, f)) {
+			files = append(files, f)
+		}
+	}
+
+	return files, nil
+}°/
+
+/*func RepoListFiles(repoPath string) ([]string, error) {
+	cmd := exec.Command("git", "ls-tree", "-z", "-r", "HEAD", "--name-only")
+	cmd.Dir = repoPath
+	cmd.Stderr = os.Stderr
+	lines, err := cmd.Output()
+
+	if err != nil {
+		return nil, err
+	}
+	paths := strings.Split(string(lines), "\x00")
+
+	fmt.Printf("FFiles: \n%v", strings.Join(paths, "\n"))
+	var files []string
+	for _, f := range paths {
+		if !isDir(filepath.Join(repoPath, f)) {
+			files = append(files, f)
+		}
+	}
+
+	return files, nil
+}*/
+
+var blameHeaderRE = regexp.MustCompile("(.*?)?([0-9a-f]{40})\\s([^(]*)?\\(<([^>]*[^0-9]*)([^\\s]*\\s[^\\s]*\\s[^\\s]*)(\\s*[0-9]*\\))\\s[^\\n]*")
 
 func GithubUsernameFromAPI(owner, repo, commitID string) (string, error) {
 	ts := oauth2.StaticTokenSource(
@@ -155,12 +245,25 @@ func BlameFile(repoPath string, filePath string) (*FileStat, error) {
 	if depRegexp.MatchString(filePath) {
 		return nil, errors.New("File is dependence")
 	}
-
-	cmd := exec.Command("git", "blame", "-w", "-M", "-l", "-C", "-e", "--", filePath)
 	fs := FileStat{Users: make(map[string]*UserStat)}
+
+	cmd := exec.Command("file", "--mime", filePath)
 	cmd.Dir = repoPath
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
+
+	if strings.Contains(string(out), "charset=binary") {
+		fs.IsBinary = true
+		cmd = exec.Command("git", "log", "-n", "1", "--format='%H (<%aE> %ai 1) BINARY'", filePath)
+		cmd.Dir = repoPath
+		cmd.Stderr = os.Stderr
+		out, err = cmd.Output()
+	} else {
+		cmd = exec.Command("git", "blame", "-w", "-M", "-l", "-C", "-e", "--", filePath)
+		cmd.Dir = repoPath
+		cmd.Stderr = os.Stderr
+		out, err = cmd.Output()
+	}
 
 	if err != nil {
 		return nil, err
@@ -200,23 +303,27 @@ func BlameFile(repoPath string, filePath string) (*FileStat, error) {
 			fs.IsTest = true
 		}
 	}
-
-	blameHeader := blameHeaderRE.FindStringSubmatch(string(out[0:200]))
+	m := 200
+	if m >= len(out) {
+		m = len(out) - 1
+	}
+	blameHeader := blameHeaderRE.FindStringSubmatch(string(out[0:m]))
 
 	if len(blameHeader) < 6 {
 		return nil, errors.New("bad row: " + string(out[0:200]))
 	}
-	l1 := len(blameHeader[1])
-	l2 := len(blameHeader[2])
-	l3 := len(blameHeader[3])
-	l4 := len(blameHeader[4])
-	l5 := len(blameHeader[5])
+	l0 := len(blameHeader[1])
+	l1 := len(blameHeader[2])
+	l2 := len(blameHeader[3])
+	l3 := len(blameHeader[4])
+	l4 := len(blameHeader[5])
+	l5 := len(blameHeader[6])
 
-	spew.Dump(blameHeader)
+	//spew.Dump(blameHeader)
 
 	pos := 0
 	now := time.Now().Unix()
-	c := 0
+	c := l0
 	commentStarted := false
 
 	for c < len(out) {
@@ -252,6 +359,7 @@ func BlameFile(repoPath string, filePath string) (*FileStat, error) {
 			c++
 		}
 		lineIsComment := false
+
 		if !fs.IsDoc {
 			line := string(out[lineStart:c])
 
@@ -276,7 +384,9 @@ func BlameFile(repoPath string, filePath string) (*FileStat, error) {
 
 		}
 		var linesStat *LinesStat
-		if lineIsComment || fs.IsDoc {
+		if fs.IsBinary {
+			linesStat = &fs.Users[email].Resources
+		} else if lineIsComment || fs.IsDoc {
 			linesStat = &fs.Users[email].DocLines
 		} else if fs.IsTest {
 			linesStat = &fs.Users[email].TestLines
@@ -321,7 +431,8 @@ func (r *RepoConfig) Stat() (*RepoStat, error) {
 func BlameRepo(repoPath string) (*RepoStat, error) {
 
 	rs := RepoStat{}
-	rs.Files = make(map[string]*FileStat)
+	filesStat := make(map[string]*FileStat)
+
 	files, err := RepoListFiles(repoPath)
 	if err != nil {
 		return nil, err
@@ -362,15 +473,16 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 				wg.Done()
 			}()
 			fs, err := BlameFile(repoPath, file)
-
+			//spew.Dump(fs)
 			if err != nil {
 				log.WithError(err).WithField("file", file).Error("BlameFile returned error")
 			} else {
+
 				if fs != nil && fs.TotalLines > 0 {
 					func() {
 						mu.Lock()
 						defer mu.Unlock()
-						rs.Files[file] = fs
+						filesStat[file] = fs
 
 					}()
 
@@ -381,88 +493,88 @@ func BlameRepo(repoPath string) (*RepoStat, error) {
 
 	}
 	wg.Wait()
-	usersSlice := []*UserStat{}
-	rs.Users = make(map[string]*UserStat)
-	for file, fs := range rs.Files {
+	rs.usersMap = make(map[string]*UserStat)
+	for file, fs := range filesStat {
 		ext := path.Ext(file)
 
 		for email, us := range fs.Users {
-			if _, exists := rs.Users[email]; !exists {
+			if _, exists := rs.usersMap[email]; !exists {
 				us := UserStat{}
-				rs.Users[email] = &us
-				usersSlice = append(usersSlice, &us)
-				rs.Users[email].Email = email
-				rs.Users[email].LinesPerExt = make(map[string]*LinesStat)
+				rs.usersMap[email] = &us
+				rs.Users = append(rs.Users, &us)
+				rs.usersMap[email].Email = email
+				rs.usersMap[email].LinesPerExt = make(map[string]*LinesStat)
 			}
-			if rs.Users[email].CommitDays < us.CommitDays {
-				rs.Users[email].CommitID = us.CommitID
-				rs.Users[email].CommitDays = us.CommitDays
+			if rs.usersMap[email].CommitDays < us.CommitDays {
+				rs.usersMap[email].CommitID = us.CommitID
+				rs.usersMap[email].CommitDays = us.CommitDays
 			}
 			rs.CodeLines.Append(us.CodeLines)
 			rs.TestLines.Append(us.TestLines)
 			rs.DocLines.Append(us.DocLines)
 			rs.Resources.Append(us.Resources)
 
-			rs.Users[email].CodeLines.Append(us.CodeLines)
-			rs.Users[email].TestLines.Append(us.TestLines)
-			rs.Users[email].DocLines.Append(us.DocLines)
-			rs.Users[email].Resources.Append(us.Resources)
+			rs.usersMap[email].CodeLines.Append(us.CodeLines)
+			rs.usersMap[email].TestLines.Append(us.TestLines)
+			rs.usersMap[email].DocLines.Append(us.DocLines)
+			rs.usersMap[email].Resources.Append(us.Resources)
 
-			if _, exists := rs.Users[email].LinesPerExt[ext]; !exists {
-				rs.Users[email].LinesPerExt[ext] = &LinesStat{}
+			if _, exists := rs.usersMap[email].LinesPerExt[ext]; !exists {
+				rs.usersMap[email].LinesPerExt[ext] = &LinesStat{}
 			}
 
-			rs.Users[email].LinesPerExt[ext].Append(us.CodeLines)
-			rs.Users[email].LinesPerExt[ext].Append(us.TestLines)
-			rs.Users[email].LinesPerExt[ext].Append(us.DocLines)
-			rs.Users[email].LinesPerExt[ext].Append(us.Resources)
+			rs.usersMap[email].LinesPerExt[ext].Append(us.CodeLines)
+			rs.usersMap[email].LinesPerExt[ext].Append(us.TestLines)
+			rs.usersMap[email].LinesPerExt[ext].Append(us.DocLines)
+			rs.usersMap[email].LinesPerExt[ext].Append(us.Resources)
 
 		}
 	}
 
-	sort.Sort(ByLines(usersSlice))
+	sort.Sort(ByLines(rs.Users))
 
 	f := strings.Split(repoPath, "/")
 	owner := f[len(f)-2]
 	repo := f[len(f)-1]
 
 	maxUsers := TOP_REPO_USERS
-	if len(usersSlice) < TOP_REPO_USERS {
-		maxUsers = len(usersSlice)
+	if len(rs.Users) < TOP_REPO_USERS {
+		maxUsers = len(rs.Users)
 	}
-	for i, user := range usersSlice[0:maxUsers] {
+	for i, user := range rs.Users[0:maxUsers] {
 		user.Username = GithubUsername(owner, repo, user.CommitID)
 		fmt.Printf("%d, %v: \n", i, user.Username)
 		spew.Dump(user)
 	}
 	return &rs, nil
-
 }
 
 var tasks chan string
-var readyRepos = make(map[string]*RepoStat)
+var readyRepos = make(map[string]*Repo)
 
 func workerLoop() {
 	tasks = make(chan string, 65536)
 	for {
 		repoURL := <-tasks
 		fmt.Printf("Received task: %v\n", repoURL)
-		repo := RepoConfig{URL: repoURL}
+		repoConfig := RepoConfig{URL: repoURL}
 
-		hash := repo.Hash()
+		var err error
+		hash := repoConfig.Hash()
 
 		if _, exists := readyRepos[hash]; exists {
 			continue
 		}
+		repo := repoConfig.Repo()
 
-		rs, err := repo.Stat()
+		repo.Stat, err = repoConfig.Stat()
 
 		if err != nil {
 			log.WithError(err).Error("Can't fetch repostat")
 			continue
 		}
 
-		readyRepos[hash] = rs
+		readyRepos[hash] = repo
 	}
 }
 
