@@ -7,13 +7,27 @@ import (
 
 	"strconv"
 
+	"sort"
+
 	svg "github.com/ajstarks/svgo"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gin-gonic/gin"
 )
 
 const CANVAS_PADDING = 32
 const CANVAS_WIDTH = 1024
 const CANVAS_HEIGHT = 1024
+const CELLS_SIDE = 10
+
+var WIDTH_TO_SIDE = 1 / math.Sqrt(3)
+
+type TownType int
+
+const (
+	TownCode TownType = iota
+	TownDocs
+	TownTests
+)
 
 func random(from, to int) int {
 	if from >= to {
@@ -76,6 +90,27 @@ func drawCanvas(c *gin.Context) {
 }
 
 func drawRepo(c *gin.Context) {
+	db := mongoSession.Clone().DB("gf")
+	defer db.Session.Close()
+	canvas := svg.New(c.Writer)
+	canvas.Start(CANVAS_WIDTH, CANVAS_HEIGHT)
+	canvas.Title("Cubes")
+	drawFloor(canvas)
+
+	c.Writer.Header().Set("Content-type", "image/svg+xml")
+
+	rc := RepoConfig{URL: c.Query("repo")}
+	rs := rc.getCachedStat()
+
+	sort.Sort(ByCodeLines(rs.Users))
+
+	field := getField(canvas)
+
+	for _, u := range rs.Users[0:15] {
+		field.drawTower(TownCode)
+
+		fmt.Printf("%v(%v): %d lines/%d (%v%%)\n", u.Username, u.Email, u.CodeLines.Total, rs.CodeLines.Total, int(100*float64(u.CodeLines.Total)/float64(rs.CodeLines.Total)))
+	}
 
 }
 
@@ -83,6 +118,121 @@ var m3 = math.Sqrt(3)
 
 func p(i int) int {
 	return int(m3*2*float64(i) + 0.5)
+}
+
+type Field struct {
+	Canvas    *svg.SVG
+	FreeCells map[TownType][]int
+	Building  map[int]int // number of floors
+	CellType  map[int]TownType
+}
+
+type Cell struct {
+	Field *Field
+	ID    int
+	MaxW  int
+	MaxZ  int
+	MaxH  int
+}
+
+var FieldSideSize = CANVAS_WIDTH * WIDTH_TO_SIDE
+var CellSize = int(FieldSideSize / CELLS_SIDE)
+
+func getField(canvas *svg.SVG) *Field {
+	f := Field{Canvas: canvas}
+	f.CellType = make(map[int]TownType)
+	f.Building = make(map[int]int)
+	f.FreeCells = make(map[TownType][]int)
+	for i := 1; i <= 40; i++ {
+		f.FreeCells[TownCode] = append(f.FreeCells[TownCode], i)
+		f.CellType[i] = TownCode
+	}
+	for i := 41; i <= 70; i++ {
+		f.FreeCells[TownDocs] = append(f.FreeCells[TownCode], i)
+		f.CellType[i] = TownDocs
+	}
+
+	for i := 71; i <= 100; i++ {
+		f.FreeCells[TownTests] = append(f.FreeCells[TownCode], i)
+		f.CellType[i] = TownTests
+	}
+	return &f
+
+}
+func (f *Field) isCellUsed(cellID int) bool {
+	_, cellUsed := f.Building[cellID]
+	return cellUsed
+}
+
+func (f *Field) isCellOfType(cellID int, townType TownType) bool {
+	return f.CellType[cellID] == townType
+}
+
+func (f *Field) getFreeCell(townType TownType) *Cell {
+	if len(f.FreeCells[townType]) == 0 {
+		return nil
+	}
+	cell := Cell{ID: f.FreeCells[townType][random(0, len(f.FreeCells[townType])-1)], Field: f}
+
+	for (cell.ID+cell.MaxW) <= (cell.ID/CELLS_SIDE+CELLS_SIDE) && !f.isCellUsed(cell.ID+cell.MaxW) && f.isCellOfType(cell.ID+cell.MaxW, townType) {
+		cell.MaxW++
+	}
+
+	for (cell.ID+cell.MaxZ*CELLS_SIDE) <= (CELLS_SIDE*CELLS_SIDE) && !f.isCellUsed(cell.ID+cell.MaxZ*CELLS_SIDE) && f.isCellOfType(cell.ID+cell.MaxZ*CELLS_SIDE, townType) {
+		cell.MaxZ++
+	}
+	return &cell
+
+}
+
+func (c *Cell) Pos() (x, y int) {
+	return (c.ID % CELLS_SIDE) * CellSize, (c.ID / CELLS_SIDE) * CellSize
+}
+
+func (c *Cell) Use(w, z, h int) {
+	fmt.Printf("Use id=%v w=%v z=%v\n", c.ID, w, z)
+	//spew.Dump(c.Field.FreeCells)
+	for i := c.ID; i < c.ID+w; i++ {
+		fmt.Printf("i: %d\n", i)
+		for j := i; j < i+z*CELLS_SIDE; j = j + CELLS_SIDE {
+			fmt.Printf("j: %d\n", i)
+			if cellType, exists := c.Field.CellType[j]; exists {
+				fmt.Printf("ok\n")
+				for pi, cellID := range c.Field.FreeCells[cellType] {
+					fmt.Printf("cellID: %v (%v)\n", cellID, j)
+					if cellID == j {
+						fmt.Printf("removed \n")
+						c.Field.FreeCells[cellType] = append(c.Field.FreeCells[cellType][:pi], c.Field.FreeCells[cellType][pi+1:]...)
+						break
+					}
+				}
+				c.Field.Building[c.ID] = h
+			}
+		}
+
+	}
+	spew.Dump(c.Field.FreeCells)
+
+}
+func (f *Field) drawTower(townType TownType) {
+	cell := f.getFreeCell(townType)
+
+	if cell == nil {
+		spew.Dump(f)
+	}
+
+	x, y := cell.Pos()
+	var h int
+	if y == 0 || x == 0 {
+		h = random(2, 7)
+	} else {
+		h = random(1, 3)
+	}
+	w := random(1, cell.MaxW)
+	z := random(1, cell.MaxZ)
+	drawCube(f.Canvas, x, y, w*CellSize, h*CellSize, z*CellSize)
+	cell.Use(w, z, h)
+
 }
 
 func drawCube(canvas *svg.SVG, xt, yt, w, h, z int) {
@@ -109,7 +259,7 @@ func drawCube(canvas *svg.SVG, xt, yt, w, h, z int) {
 
 	rx := []int{x + p(z), x + p(z), x - p(w) + p(z), x - p(w) + p(z), x + p(z)}
 	ry := []int{y + z*2, y + z*2 + h, y + (z+w)*2 + h, y + (z+w)*2, y + z*2}
-	fmt.Printf("x: %+v\ny: %+v\n", rx, ry)
+	//fmt.Printf("x: %+v\ny: %+v\n", rx, ry)
 	canvas.Polygon(rx, ry, fill(r, g, b))
 }
 

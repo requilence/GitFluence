@@ -263,6 +263,10 @@ func BlameFile(repoPath string, filePath string) (*FileStat, error) {
 		cmd.Dir = repoPath
 		cmd.Stderr = os.Stderr
 		out, err = cmd.Output()
+
+		if strings.Contains(filePath, "doc/") || strings.Contains(filePath, "docs/")  || strings.Contains(filePath, "help/") {
+			fs.IsDoc=true
+		}
 	}
 
 	if err != nil {

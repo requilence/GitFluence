@@ -108,7 +108,7 @@ func (r *RepoConfig) getCachedStat() *RepoStat {
 	defer db.Session.Close()
 	//host, owner, repo, _ := r.ParseURL()
 	cachedRepo := Repo{}
-	db.C("repostats").Find(bson.M{"token": r.Hash()}).One(&cachedRepo)
+	db.C("repostats").Find(bson.M{"hash": r.Hash()}).One(&cachedRepo)
 
 	if cachedRepo.Hash != "" {
 		return cachedRepo.Stat
@@ -211,6 +211,8 @@ func main() {
 
 		c.JSON(200, gin.H{"status": "ready", "hash": rc.Hash()})
 	})
+
+	r.GET("/draw", drawRepo)
 
 	r.GET("/rs", func(c *gin.Context) {
 		url, _ := c.GetQuery("url")
