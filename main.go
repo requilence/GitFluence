@@ -191,6 +191,7 @@ func main() {
 		})
 	})
 
+	r.GET("cube.svg", drawCanvas)
 	r.GET("/repo", func(c *gin.Context) {
 		url, _ := c.GetQuery("url")
 
