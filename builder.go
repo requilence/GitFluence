@@ -10,7 +10,6 @@ import (
 	"sort"
 
 	svg "github.com/ajstarks/svgo"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/gin-gonic/gin"
 )
 
@@ -18,6 +17,7 @@ const CANVAS_PADDING = 32
 const CANVAS_WIDTH = 1024
 const CANVAS_HEIGHT = 1024
 const CELLS_SIDE = 10
+const CELL_PADDING = 5
 
 var WIDTH_TO_SIDE = 1 / math.Sqrt(3)
 
@@ -28,6 +28,14 @@ const (
 	TownDocs
 	TownTests
 )
+
+type ByZIndex []Tower
+
+func (a ByZIndex) Len() int      { return len(a) }
+func (a ByZIndex) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByZIndex) Less(i, j int) bool {
+	return a[i].ZIndex < a[j].ZIndex
+}
 
 func random(from, to int) int {
 	if from >= to {
@@ -107,9 +115,17 @@ func drawRepo(c *gin.Context) {
 	field := getField(canvas)
 
 	for _, u := range rs.Users[0:15] {
-		field.drawTower(TownCode)
+		field.addTower(TownCode)
 
 		fmt.Printf("%v(%v): %d lines/%d (%v%%)\n", u.Username, u.Email, u.CodeLines.Total, rs.CodeLines.Total, int(100*float64(u.CodeLines.Total)/float64(rs.CodeLines.Total)))
+	}
+	sort.Sort(ByZIndex(field.Towers))
+
+	for _, tower := range field.Towers {
+		x, y := tower.Cell.Pos()
+
+		fmt.Printf("Tower zindex=%v id=%v w=%v z=%v h=%v x=%v y=%v\n", tower.ZIndex, tower.Cell.ID, tower.W, tower.Z, tower.H, x, y)
+		drawCube(field.Canvas, x+CELL_PADDING*int((tower.Cell.ID%CELLS_SIDE)), y+CELL_PADDING*int((tower.Cell.ID/CELLS_SIDE)), tower.W*CellSize, tower.H*CellSize, tower.Z*CellSize)
 	}
 
 }
@@ -120,23 +136,33 @@ func p(i int) int {
 	return int(m3*2*float64(i) + 0.5)
 }
 
+type Tower struct {
+	ZIndex int
+	W      int
+	Z      int
+	H      int
+	Cell   *Cell
+}
 type Field struct {
 	Canvas    *svg.SVG
 	FreeCells map[TownType][]int
 	Building  map[int]int // number of floors
 	CellType  map[int]TownType
+
+	Towers []Tower
 }
 
 type Cell struct {
-	Field *Field
-	ID    int
-	MaxW  int
-	MaxZ  int
-	MaxH  int
+	Field  *Field
+	ID     int
+	ZIndex int
+	MaxW   int
+	MaxZ   int
+	MaxH   int
 }
 
 var FieldSideSize = CANVAS_WIDTH * WIDTH_TO_SIDE
-var CellSize = int(FieldSideSize / CELLS_SIDE)
+var CellSize = int(FieldSideSize/CELLS_SIDE) - CELL_PADDING
 
 func getField(canvas *svg.SVG) *Field {
 	f := Field{Canvas: canvas}
@@ -190,18 +216,23 @@ func (c *Cell) Pos() (x, y int) {
 }
 
 func (c *Cell) Use(w, z, h int) {
-	fmt.Printf("Use id=%v w=%v z=%v\n", c.ID, w, z)
+	//fmt.Printf("Use id=%v w=%v z=%v\n", c.ID, w, z)
 	//spew.Dump(c.Field.FreeCells)
 	for i := c.ID; i < c.ID+w; i++ {
-		fmt.Printf("i: %d\n", i)
+		//fmt.Printf("i: %d\n", i)
 		for j := i; j < i+z*CELLS_SIDE; j = j + CELLS_SIDE {
-			fmt.Printf("j: %d\n", i)
+			//fmt.Printf("j: %d\n", i)
 			if cellType, exists := c.Field.CellType[j]; exists {
-				fmt.Printf("ok\n")
+				zindex := 100*(j/CELLS_SIDE+j%CELLS_SIDE) - int(math.Abs(float64(j/CELLS_SIDE-j%CELLS_SIDE)))
+				if zindex > c.ZIndex {
+					c.ZIndex = zindex
+				}
+
+				//	fmt.Printf("ok\n")
 				for pi, cellID := range c.Field.FreeCells[cellType] {
-					fmt.Printf("cellID: %v (%v)\n", cellID, j)
+					//	fmt.Printf("cellID: %v (%v)\n", cellID, j)
 					if cellID == j {
-						fmt.Printf("removed \n")
+						//	fmt.Printf("removed \n")
 						c.Field.FreeCells[cellType] = append(c.Field.FreeCells[cellType][:pi], c.Field.FreeCells[cellType][pi+1:]...)
 						break
 					}
@@ -211,15 +242,11 @@ func (c *Cell) Use(w, z, h int) {
 		}
 
 	}
-	spew.Dump(c.Field.FreeCells)
+	//spew.Dump(c.Field.FreeCells)
 
 }
-func (f *Field) drawTower(townType TownType) {
+func (f *Field) addTower(townType TownType) {
 	cell := f.getFreeCell(townType)
-
-	if cell == nil {
-		spew.Dump(f)
-	}
 
 	x, y := cell.Pos()
 	var h int
@@ -228,10 +255,27 @@ func (f *Field) drawTower(townType TownType) {
 	} else {
 		h = random(1, 3)
 	}
+	if y == 0 || x == 0 || x > int(FieldSideSize)-CellSize || y > int(FieldSideSize)-CellSize {
+		if cell.MaxW > 3 {
+			cell.MaxW = 3
+		}
+		if cell.MaxZ > 3 {
+			cell.MaxZ = 3
+		}
+
+	} else {
+		if cell.MaxW > 2 {
+			cell.MaxW = 2
+		}
+		if cell.MaxZ > 2 {
+			cell.MaxZ = 2
+		}
+	}
 	w := random(1, cell.MaxW)
 	z := random(1, cell.MaxZ)
-	drawCube(f.Canvas, x, y, w*CellSize, h*CellSize, z*CellSize)
+
 	cell.Use(w, z, h)
+	f.Towers = append(f.Towers, Tower{ZIndex: cell.ZIndex, W: w, Z: z, H: h, Cell: cell})
 
 }
 
@@ -264,7 +308,7 @@ func drawCube(canvas *svg.SVG, xt, yt, w, h, z int) {
 }
 
 func drawFloor(canvas *svg.SVG) {
-	r, g, b := random(190, 196), random(206, 255), random(60, 72)
+	r, g, b := random(190, 196), random(190, 240), random(60, 72)
 	t := 1 / m3
 	x := int(CANVAS_WIDTH / 2)
 	y := CANVAS_HEIGHT - int(CANVAS_WIDTH*t)
