@@ -32,7 +32,7 @@ var (
 	workerBaseURL = "http://127.0.0.1:7777/"
 )
 
-func init() {
+func dbConnect() {
 
 	uri := "mongodb://localhost:27017"
 	var err error
@@ -212,6 +212,7 @@ func main() {
 		workerHandler()
 		return
 	}
+	dbConnect()
 	go tokensFetchLoop()
 	r := gin.Default()
 	r.GET("/ping", func(c *gin.Context) {
