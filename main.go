@@ -103,12 +103,12 @@ func (r *RepoConfig) ParseURL() (host, owner, name string, err error) {
 	db.C("email2login").Find(bson.M{"_id": id}).One(title)
 }*/
 
-func (r *RepoConfig) getCachedStat() *RepoStat {
+func (r *Repo) getCachedStat() *RepoStat {
 	db := mongoSession.Clone().DB("gf")
 	defer db.Session.Close()
 	//host, owner, repo, _ := r.ParseURL()
 	cachedRepo := Repo{}
-	db.C("repostats").Find(bson.M{"hash": r.Hash()}).One(&cachedRepo)
+	db.C("repostats").Find(bson.M{"hash": r.Hash}).One(&cachedRepo)
 
 	if cachedRepo.Hash != "" {
 		return cachedRepo.Stat
@@ -120,10 +120,19 @@ var tokensToFetch []string
 var mu sync.Mutex
 
 func repoQuery(repoURL string) {
+	rc := RepoConfig{URL: repoURL}
+	hash := rc.Hash()
+	for _, x := range tokensToFetch {
+
+		if x == hash {
+			return
+		}
+	}
+
 	c := http.DefaultClient
 	req, _ := http.NewRequest("POST", workerBaseURL+"query", strings.NewReader(repoURL))
 	resp, err := c.Do(req)
-	if resp.StatusCode == 200 {
+	if resp != nil && resp.StatusCode == 200 {
 		defer resp.Body.Close()
 		contents, _ := ioutil.ReadAll(resp.Body)
 
@@ -162,7 +171,18 @@ func tokensFetchLoop() {
 				}
 				if len(data) > 0 {
 					for _, repo := range data {
+
 						db.C("repostats").Insert(repo)
+						go func() {
+							f, err := os.Create("frontend/svgs/" + repo.Hash + ".svg")
+							if err != nil {
+								log.WithError(err).Error("Can't save SVG")
+							}
+							defer f.Close()
+
+							repo.Draw(f)
+
+						}()
 					}
 					b := tokensToFetch[:0]
 					for _, x := range tokensToFetch {
@@ -196,8 +216,26 @@ func main() {
 		})
 	})
 
-	r.GET("cube.svg", drawCanvas)
-	r.GET("/repo", func(c *gin.Context) {
+	//	r.GET("cube.svg", drawCanvas)
+
+	r.POST("/check", func(c *gin.Context) {
+		repoURL := "https://github.com/" + c.PostForm("repo")
+		rc := RepoConfig{URL: repoURL}
+		rs := rc.Repo().getCachedStat()
+
+		if rs == nil {
+			repoQuery(repoURL)
+			c.JSON(200, gin.H{"status": "processing"})
+			return
+		}
+		if len(rs.Users) > 30 {
+			rs.Users = rs.Users[0:50]
+		}
+		rs.CodeLines.Total
+		c.JSON(200, gin.H{"status": "ready", "hash": rc.Hash(), "stat": rs})
+	})
+
+	/*r.GET("/repo", func(c *gin.Context) {
 		url, _ := c.GetQuery("url")
 
 		rc := RepoConfig{URL: url}
@@ -210,9 +248,11 @@ func main() {
 		}
 
 		c.JSON(200, gin.H{"status": "ready", "hash": rc.Hash()})
-	})
+	})*/
 
-	r.GET("/draw", drawRepo)
+	r.Static("/static", "./frontend")
+	r.StaticFile("/", "./frontend/index.html")
+	r.GET("/draw", drawRepoHandler)
 
 	r.GET("/rs", func(c *gin.Context) {
 		url, _ := c.GetQuery("url")

@@ -1,5 +1,10 @@
 package main
 
+type Color struct {
+	R int
+	G int
+	B int
+}
 type UserStat struct {
 	CodeLines   LinesStat             `bson:",omitempty"`
 	DocLines    LinesStat             `bson:",omitempty"`
@@ -10,6 +15,7 @@ type UserStat struct {
 	CommitID    string `bson:",omitempty"`
 	CommitDays  int    `bson:",omitempty"`
 	Username    string `bson:",omitempty"`
+	Color       Color
 }
 
 type LinesStat struct {
@@ -18,6 +24,10 @@ type LinesStat struct {
 	Last6Month int `bson:",omitempty"`
 	LastYear   int `bson:",omitempty"`
 	Total      int `bson:",omitempty"`
+}
+
+func (l *LinesStat) Percent(total int) int {
+	return int(100 * float64(l.Total) / float64(total))
 }
 
 func (l *LinesStat) Append(lines LinesStat) {
@@ -43,7 +53,7 @@ type RepoStat struct {
 	Resources LinesStat
 
 	usersMap map[string]*UserStat
-	Users []*UserStat
+	Users    []*UserStat
 	//Files map[string]*FileStat
 }
 

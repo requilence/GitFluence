@@ -223,9 +223,18 @@ func GithubUsernameFromAPI(owner, repo, commitID string) (string, error) {
 	client := github.NewClient(tc)
 
 	commit, _, err := client.Repositories.GetCommit(owner, repo, commitID)
+
 	//rl, _, _ := client.RateLimits()
 	//	fmt.Printf("RAte limits %v, %v", rl.Core, rl.Search)
 	if err != nil {
+		return "", err
+	}
+
+	if commit == nil {
+		return "", err
+	}
+
+	if commit.Author == nil {
 		return "", err
 	}
 	return *commit.Author.Login, nil
@@ -264,8 +273,8 @@ func BlameFile(repoPath string, filePath string) (*FileStat, error) {
 		cmd.Stderr = os.Stderr
 		out, err = cmd.Output()
 
-		if strings.Contains(filePath, "doc/") || strings.Contains(filePath, "docs/")  || strings.Contains(filePath, "help/") {
-			fs.IsDoc=true
+		if strings.Contains(filePath, "doc/") || strings.Contains(filePath, "docs/") || strings.Contains(filePath, "help/") {
+			fs.IsDoc = true
 		}
 	}
 

@@ -5,9 +5,9 @@ import (
 	"math"
 	"math/rand"
 
-	"strconv"
-
 	"sort"
+
+	"io"
 
 	svg "github.com/ajstarks/svgo"
 	"github.com/gin-gonic/gin"
@@ -18,6 +18,7 @@ const CANVAS_WIDTH = 1024
 const CANVAS_HEIGHT = 1024
 const CELLS_SIDE = 10
 const CELL_PADDING = 5
+const MAX_USERS = 15
 
 var WIDTH_TO_SIDE = 1 / math.Sqrt(3)
 
@@ -48,7 +49,14 @@ func Round(f float64) int {
 	return int(math.Floor(f + .5))
 }
 
-func randcolor() (int, int, int) {
+func randColorGrey() (int, int, int) {
+	r := random(190, 210)
+	g := r + random(-10, 10)
+	b := r + random(-10, 10)
+	return r, g, b
+}
+
+func randColorPastelle() (int, int, int) {
 	return rand.Intn(128) + 127, rand.Intn(128) + 127, rand.Intn(128) + 127
 }
 
@@ -74,7 +82,7 @@ func fill(r, g, b int) string {
 	return fmt.Sprintf("fill:rgb(%d,%d,%d)", r, g, b)
 }
 
-func drawCanvas(c *gin.Context) {
+/*func drawCanvas(c *gin.Context) {
 	c.Writer.Header().Set("Content-type", "image/svg+xml")
 	canvas := svg.New(c.Writer)
 	canvas.Start(CANVAS_WIDTH, CANVAS_HEIGHT)
@@ -95,38 +103,52 @@ func drawCanvas(c *gin.Context) {
 	drawCube(canvas, x+w*3, y+y*2, w, h*4, z)
 
 	canvas.End()
-}
-
-func drawRepo(c *gin.Context) {
-	db := mongoSession.Clone().DB("gf")
-	defer db.Session.Close()
-	canvas := svg.New(c.Writer)
-	canvas.Start(CANVAS_WIDTH, CANVAS_HEIGHT)
-	canvas.Title("Cubes")
-	drawFloor(canvas)
-
+}*/
+func drawRepoHandler(c *gin.Context) {
 	c.Writer.Header().Set("Content-type", "image/svg+xml")
 
 	rc := RepoConfig{URL: c.Query("repo")}
-	rs := rc.getCachedStat()
+
+	rc.Repo().Draw(c.Writer)
+}
+
+func (repo *Repo) Draw(w io.Writer) {
+	canvas := svg.New(w)
+	canvas.Start(CANVAS_WIDTH, CANVAS_HEIGHT)
+	canvas.Title(repo.Owner + "/" + repo.Name)
+
+	drawFloor(canvas)
+
+	rs := repo.getCachedStat()
 
 	sort.Sort(ByCodeLines(rs.Users))
 
 	field := getField(canvas)
 
-	for _, u := range rs.Users[0:15] {
-		field.addTower(TownCode)
+	field.addUsersTowers(TownCode, rs)
+
+	field.addUsersTowers(TownDocs, rs)
+
+	field.addUsersTowers(TownTests, rs)
+
+	for i, u := range rs.Users {
+		//field.addTower(TownCode, u)
 
 		fmt.Printf("%v(%v): %d lines/%d (%v%%)\n", u.Username, u.Email, u.CodeLines.Total, rs.CodeLines.Total, int(100*float64(u.CodeLines.Total)/float64(rs.CodeLines.Total)))
+		if (i + 1) == MAX_USERS {
+			break
+		}
 	}
 	sort.Sort(ByZIndex(field.Towers))
 
 	for _, tower := range field.Towers {
 		x, y := tower.Cell.Pos()
 
-		fmt.Printf("Tower zindex=%v id=%v w=%v z=%v h=%v x=%v y=%v\n", tower.ZIndex, tower.Cell.ID, tower.W, tower.Z, tower.H, x, y)
-		drawCube(field.Canvas, x+CELL_PADDING*int((tower.Cell.ID%CELLS_SIDE)), y+CELL_PADDING*int((tower.Cell.ID/CELLS_SIDE)), tower.W*CellSize, tower.H*CellSize, tower.Z*CellSize)
+		fmt.Printf("Tower zindex=%v id=%v w=%v z=%v h=%v x=%v y=%v color %+v\n", tower.ZIndex, tower.Cell.ID, tower.W, tower.Z, tower.H, x, y, tower.Color)
+		drawCube(field.Canvas, x+CELL_PADDING*int((tower.Cell.ID%CELLS_SIDE)), y+CELL_PADDING*int((tower.Cell.ID/CELLS_SIDE)), tower.W*CellSize, tower.H*CellSize, tower.Z*CellSize, tower.Color.R, tower.Color.G, tower.Color.B, tower.Email)
 	}
+
+	canvas.End()
 
 }
 
@@ -141,6 +163,8 @@ type Tower struct {
 	W      int
 	Z      int
 	H      int
+	Email  string
+	Color  Color
 	Cell   *Cell
 }
 type Field struct {
@@ -173,13 +197,13 @@ func getField(canvas *svg.SVG) *Field {
 		f.FreeCells[TownCode] = append(f.FreeCells[TownCode], i)
 		f.CellType[i] = TownCode
 	}
-	for i := 41; i <= 70; i++ {
-		f.FreeCells[TownDocs] = append(f.FreeCells[TownCode], i)
+	for i := 51; i <= 70; i++ {
+		f.FreeCells[TownDocs] = append(f.FreeCells[TownDocs], i)
 		f.CellType[i] = TownDocs
 	}
 
-	for i := 71; i <= 100; i++ {
-		f.FreeCells[TownTests] = append(f.FreeCells[TownCode], i)
+	for i := 81; i <= 100; i++ {
+		f.FreeCells[TownTests] = append(f.FreeCells[TownTests], i)
 		f.CellType[i] = TownTests
 	}
 	return &f
@@ -245,41 +269,170 @@ func (c *Cell) Use(w, z, h int) {
 	//spew.Dump(c.Field.FreeCells)
 
 }
-func (f *Field) addTower(townType TownType) {
-	cell := f.getFreeCell(townType)
 
-	x, y := cell.Pos()
-	var h int
-	if y == 0 || x == 0 {
-		h = random(2, 7)
-	} else {
-		h = random(1, 3)
+func getUserTotal(us *UserStat, townType TownType) int {
+	if townType == TownCode {
+		return us.CodeLines.Total
+	} else if townType == TownDocs {
+		return us.DocLines.Total
+	} else if townType == TownTests {
+		return us.TestLines.Total
 	}
-	if y == 0 || x == 0 || x > int(FieldSideSize)-CellSize || y > int(FieldSideSize)-CellSize {
-		if cell.MaxW > 3 {
-			cell.MaxW = 3
-		}
-		if cell.MaxZ > 3 {
-			cell.MaxZ = 3
-		}
+	return 0
+}
 
-	} else {
-		if cell.MaxW > 2 {
-			cell.MaxW = 2
-		}
-		if cell.MaxZ > 2 {
-			cell.MaxZ = 2
-		}
+func getRepoTotal(us *RepoStat, townType TownType) int {
+	if townType == TownCode {
+		return us.CodeLines.Total
+	} else if townType == TownDocs {
+		return us.DocLines.Total
+	} else if townType == TownTests {
+		return us.TestLines.Total
 	}
-	w := random(1, cell.MaxW)
-	z := random(1, cell.MaxZ)
+	return 0
+}
 
-	cell.Use(w, z, h)
-	f.Towers = append(f.Towers, Tower{ZIndex: cell.ZIndex, W: w, Z: z, H: h, Cell: cell})
+func (f *Field) addUsersTowers(townType TownType, rs *RepoStat) {
+
+	totalUsers := 10
+	if len(rs.Users) < 10 {
+		totalUsers = len(rs.Users)
+	}
+	var volume, totalVolume float64
+	var r, g, b int
+
+	userLines := 0
+	userVolume := 0.0
+	downscale := float64(getRepoTotal(rs, townType)) / 500
+
+	for i, us := range rs.Users[0 : totalUsers-1] {
+		volume = 0
+		if us.Color.R > 0 {
+			r, g, b = us.Color.R, us.Color.B, us.Color.G
+		} else {
+			r, g, b = randColorPastelle()
+		}
+		fmt.Printf("Adding tower for user %v r=%v g=%v b=%v \n", us.Email, r, g, b)
+		if i == 0 {
+
+			totalVolume = float64(getUserTotal(us, townType)) / (500.0 * downscale)
+			if totalVolume > 30 {
+				totalVolume = 30
+			}
+
+		} else {
+			totalVolume = totalVolume * float64(getUserTotal(us, townType)) / float64(getUserTotal(rs.Users[i-1], townType))
+		}
+		userLines += getUserTotal(us, townType)
+
+		for volume < totalVolume {
+			cell := f.getFreeCell(townType)
+
+			if cell == nil {
+				break
+			}
+			x, y := cell.Pos()
+
+			var h int
+			if y == 0 || x == 0 {
+				h = random(2, 10)
+			} else {
+				h = random(1, 6)
+			}
+			if y == 0 || x == 0 || x > int(FieldSideSize)-CellSize || y > int(FieldSideSize)-CellSize {
+				if cell.MaxW > 3 {
+					cell.MaxW = 3
+				}
+				if cell.MaxZ > 3 {
+					cell.MaxZ = 3
+				}
+
+			} else {
+				if cell.MaxW > 2 {
+					cell.MaxW = 2
+				}
+				if cell.MaxZ > 2 {
+					cell.MaxZ = 2
+				}
+			}
+			w := random(1, cell.MaxW)
+			z := random(1, cell.MaxZ)
+
+			if float64(w*h*z) > totalVolume*1.3 {
+				if z > 2 {
+					z--
+				} else if w > 2 {
+					w--
+				} else if h > 2 {
+					h--
+				}
+			}
+			volume += float64(w * h * z)
+
+			cell.Use(w, z, h)
+			//us.Color = Color{R: r, G: g, B: b}
+			fmt.Printf("Adding tower for user %v r=%v g=%v b=%v \n", us.Email, r, g, b)
+			f.Towers = append(f.Towers, Tower{Email: us.Email, ZIndex: cell.ZIndex, W: w, Z: z, H: h, Cell: cell, Color: Color{R: r, G: g, B: b}})
+		}
+		userVolume += volume
+	}
+
+	totalVolume = userVolume * (float64(getRepoTotal(rs, townType)) / float64(userLines))
+	volume = 0
+	for volume < totalVolume {
+		r, g, b = randColorGrey()
+		cell := f.getFreeCell(townType)
+
+		if cell == nil {
+			break
+		}
+		x, y := cell.Pos()
+
+		var h int
+		if y == 0 || x == 0 {
+			h = random(4, 9)
+		} else {
+			h = random(1, 6)
+		}
+		if y == 0 || x == 0 || x > int(FieldSideSize)-CellSize || y > int(FieldSideSize)-CellSize {
+			if cell.MaxW > 3 {
+				cell.MaxW = 3
+			}
+			if cell.MaxZ > 3 {
+				cell.MaxZ = 3
+			}
+
+		} else {
+			if cell.MaxW > 2 {
+				cell.MaxW = 2
+			}
+			if cell.MaxZ > 2 {
+				cell.MaxZ = 2
+			}
+		}
+		w := random(1, cell.MaxW)
+		z := random(1, cell.MaxZ)
+
+		if float64(w*h*z) > totalVolume*1.3 {
+			if z > 2 {
+				z--
+			} else if w > 2 {
+				w--
+			} else if h > 2 {
+				h--
+			}
+		}
+		volume += float64(w * h * z)
+
+		cell.Use(w, z, h)
+		//us.Color = Color{R: r, G: g, B: b}
+		fmt.Printf("Adding tower for anon \n")
+		f.Towers = append(f.Towers, Tower{ZIndex: cell.ZIndex, W: w, Z: z, H: h, Cell: cell, Color: Color{R: r, G: g, B: b}})
+	}
 
 }
 
-func drawCube(canvas *svg.SVG, xt, yt, w, h, z int) {
+func drawCube(canvas *svg.SVG, xt, yt, w, h, z, r, g, b int, id string) {
 	w = int(w / 4)
 	z = int(z / 4)
 	y := CANVAS_HEIGHT - int(CANVAS_WIDTH*(1/m3)) - h
@@ -290,9 +443,7 @@ func drawCube(canvas *svg.SVG, xt, yt, w, h, z int) {
 
 	x += int((m3 / 2) * float64(yt))
 	y += int(yt / 2)
-
-	r, g, b := randcolor()
-
+	canvas.Gid(id)
 	tx := []int{x, x + p(z), x - p(w) + p(z), x - p(w), x}
 	ty := []int{y, y + z*2, y + (z+w)*2, y + w*2, y}
 	canvas.Polygon(tx, ty, fill(lightColor(r, g, b, 0.1)))
@@ -305,6 +456,7 @@ func drawCube(canvas *svg.SVG, xt, yt, w, h, z int) {
 	ry := []int{y + z*2, y + z*2 + h, y + (z+w)*2 + h, y + (z+w)*2, y + z*2}
 	//fmt.Printf("x: %+v\ny: %+v\n", rx, ry)
 	canvas.Polygon(rx, ry, fill(r, g, b))
+	canvas.Gend()
 }
 
 func drawFloor(canvas *svg.SVG) {
