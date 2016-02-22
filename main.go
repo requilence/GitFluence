@@ -174,6 +174,10 @@ func tokensFetchLoop() {
 
 						db.C("repostats").Insert(repo)
 						go func() {
+							if !exists("frontend/svgs/") {
+								os.MkdirAll("frontend/svgs/", 0777)
+							}
+
 							f, err := os.Create("frontend/svgs/" + repo.Hash + ".svg")
 							if err != nil {
 								log.WithError(err).Error("Can't save SVG")
@@ -231,7 +235,7 @@ func main() {
 		if len(rs.Users) > 30 {
 			rs.Users = rs.Users[0:50]
 		}
-		rs.CodeLines.Total
+		//		rs.CodeLines.Total
 		c.JSON(200, gin.H{"status": "ready", "hash": rc.Hash(), "stat": rs})
 	})
 

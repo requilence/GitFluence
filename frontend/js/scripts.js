@@ -1,7 +1,16 @@
+    var rs;
+
+    function getDataByEmail(email){
+     for (key in window.rs.Users) {
+                  if (window.rs.Users[key].Email==email){
+                  return window.rs.Users[key];
+                }
+               }}
+
 (function($) {
     "use strict";
 
-    var rs;
+
     new WOW().init();
     $(".select-repo").bind('click', function(event) {
 
@@ -25,7 +34,13 @@
         $('svg g').bind('mouseover', function(event) {
            var email=$(this).attr("id");
             if(typeof email=="undefined"){
-        $(this).tooltip({title: "Other users: "+ rs.CodeLines.Total+" lines"})
+                  $(this).tooltip({title: "Other users: "+ rs.CodeLines.Total+" lines"})
+            }else{
+                var data=getDataByEmail(email);
+                if (typeof data!=="undefined"){
+                     $(this).tooltip({title: data.Username+": " + data.CodeLines.Total+" lines"})
+                }
+
             }
         });
         }
@@ -42,7 +57,7 @@ function getRepo(){
             $("#vis").show();
             $("#vis .loading").show();
          }else  if(data.status=="ready"){
-         rs=data.stat;
+         window.rs=data.stat;
            $("#vis #svg").show();
             $("#vis").show();
             $("#vis .loading").hide();
