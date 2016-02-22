@@ -31,14 +31,14 @@
         var visGetRepo;
 
         function attachSVG(){
-        $('svg g').bind('mouseover', function(event) {
+        $('svg g').bind('mousein mouseover', function(event) {
            var email=$(this).attr("id");
-            if(typeof email=="undefined"){
-                  $(this).tooltip({title: "Other users: "+ rs.CodeLines.Total+" lines"})
+            if((typeof email=="undefined") || email==""){
+                  $(this).tooltip({html:  true, title: "<strong>Other users</strong><br/>"+ window.rs.CodeLines.Total+" lines of code<br/>\n"+window.rs.TestLines.Total+" lines of tests<br/>\n"+window.rs.DocLines.Total+" lines of docs<br/>\n"})
             }else{
                 var data=getDataByEmail(email);
                 if (typeof data!=="undefined"){
-                     $(this).tooltip({title: data.Username+": " + data.CodeLines.Total+" lines"})
+                     $(this).tooltip({html:  true,  title: "<strong>"+data.Username +"</strong>"+"<br/>\n" + data.CodeLines.Total+" lines of code<br/>\n"+data.TestLines.Total+" lines of tests<br/>\n"+data.DocLines.Total+" lines of docs"})
                 }
 
             }
