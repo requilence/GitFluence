@@ -5,5 +5,7 @@ Github repo visualization using **git-blame** in a unusual way. GitFluence clone
 
 Selection of line types(code, docs, test or resource) and time(last month, 3 months, 6 months or 1year) is available.
 
+![](https://1571124647.rsc.cdn77.org/gitfluence_sample.png  "Example: google/go-github repo")
+
 #### Koding Hackathon submission
 After hackathon judging will end I planning to finish rating calculation based on this algorithm 
